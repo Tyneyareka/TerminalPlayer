@@ -1,5 +1,6 @@
 package dev.terminalplayer.ui.components
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -46,6 +47,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.terminalplayer.core.Ascii
+import dev.terminalplayer.ui.motion.animatedPressScale
+import dev.terminalplayer.ui.motion.scaleLayer
 import dev.terminalplayer.ui.theme.Accent
 import dev.terminalplayer.ui.theme.Stroke
 import dev.terminalplayer.ui.theme.StrokeSoft
@@ -103,17 +106,34 @@ fun AsciiButton(
     val pressed by interactionSource.collectIsPressedAsState()
     val inverted = enabled && (active || pressed)
     val shape = RoundedCornerShape(12.dp)
-    val textColor = when {
-        !enabled -> TextMuted
-        inverted -> TextPrimary
-        else -> TextSecondary
-    }
+
+    val fill by animateColorAsState(
+        targetValue = if (inverted) color else SurfaceCard,
+        animationSpec = tween(170),
+        label = "asciiButtonFill",
+    )
+    val outline by animateColorAsState(
+        targetValue = if (inverted) color else Stroke,
+        animationSpec = tween(170),
+        label = "asciiButtonOutline",
+    )
+    val ink by animateColorAsState(
+        targetValue = when {
+            !enabled -> TextMuted
+            inverted -> TextPrimary
+            else -> TextSecondary
+        },
+        animationSpec = tween(170),
+        label = "asciiButtonInk",
+    )
+    val press = animatedPressScale(pressed && enabled, pressedScale = 0.95f)
 
     Box(
         modifier = modifier
+            .scaleLayer(press)
             .clip(shape)
-            .background(if (inverted) color else SurfaceCard)
-            .border(1.dp, if (inverted) color else Stroke, shape)
+            .background(fill)
+            .border(1.dp, outline, shape)
             .then(
                 if (enabled) {
                     Modifier.clickable(
@@ -130,7 +150,7 @@ fun AsciiButton(
     ) {
         Text(
             text = label,
-            style = style.copy(fontSize = 12.sp, color = textColor),
+            style = style.copy(fontSize = 12.sp, color = ink),
             maxLines = 1,
             softWrap = false,
         )

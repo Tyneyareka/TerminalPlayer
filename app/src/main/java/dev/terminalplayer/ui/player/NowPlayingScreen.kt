@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.Player
 import dev.terminalplayer.core.Ascii
+import dev.terminalplayer.i18n.LocalStrings
 import dev.terminalplayer.playback.PlaybackUiState
 import dev.terminalplayer.ui.components.AsciiArtwork
 import dev.terminalplayer.ui.components.GlyphButton
@@ -68,6 +69,7 @@ fun NowPlayingScreen(
     val playback by viewModel.playback.collectAsStateWithLifecycle()
     val catalog by viewModel.catalog.collectAsStateWithLifecycle()
     val sessionId by viewModel.audioSessionId.collectAsStateWithLifecycle()
+    val strings = LocalStrings.current
 
     val currentTrack = catalog.tracks.firstOrNull { it.id.toString() == playback.mediaId }
     val favorite = playback.mediaId.toLongOrNull()?.let { it in catalog.favorites } ?: false
@@ -80,6 +82,7 @@ fun NowPlayingScreen(
     ) {
         Spacer(Modifier.height(8.dp))
         NowPlayingHeader(
+            label = strings.nowPlaying,
             queueLabel = if (playback.queueSize > 0) {
                 "${playback.queueIndex + 1} / ${playback.queueSize}"
             } else {
@@ -102,7 +105,8 @@ fun NowPlayingScreen(
                 rows = 14,
             )
             Text(
-                text = "ASCII COVER // ${currentTrack?.let { Ascii.clock(it.durationMs) } ?: "--:--"}",
+                text = "${strings.asciiCoverPrefix} // " +
+                    (currentTrack?.let { Ascii.clock(it.durationMs) } ?: "--:--"),
                 style = TerminalType.label.copy(fontSize = 10.sp),
                 color = TextMuted,
                 modifier = Modifier
@@ -114,14 +118,14 @@ fun NowPlayingScreen(
 
         Spacer(Modifier.height(22.dp))
         MarqueeText(
-            text = playback.title.ifBlank { "NOTHING PLAYING" },
+            text = playback.title.ifBlank { strings.nothingPlaying },
             style = TerminalType.headline,
             modifier = Modifier.fillMaxWidth(),
             active = playback.hasTrack,
         )
         Spacer(Modifier.height(5.dp))
         Text(
-            text = playback.artist.ifBlank { "UNKNOWN ARTIST" },
+            text = playback.artist.ifBlank { strings.unknownArtist },
             style = TerminalType.body,
             color = TextSecondary,
             maxLines = 1,
@@ -129,7 +133,8 @@ fun NowPlayingScreen(
         )
         Spacer(Modifier.height(3.dp))
         Text(
-            text = "ALBUM // ${playback.album.ifBlank { "UNKNOWN" }}",
+            text = "${strings.albumPrefix} // " +
+                playback.album.ifBlank { strings.unknownAlbum },
             style = TerminalType.label,
             color = TextMuted,
             maxLines = 1,
@@ -197,6 +202,7 @@ fun NowPlayingScreen(
 
 @Composable
 private fun NowPlayingHeader(
+    label: String,
     queueLabel: String,
     favorite: Boolean,
     onBack: () -> Unit,
@@ -215,7 +221,7 @@ private fun NowPlayingHeader(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
-                text = "NOW PLAYING",
+                text = label,
                 style = TerminalType.label,
                 color = TextMuted,
                 maxLines = 1,

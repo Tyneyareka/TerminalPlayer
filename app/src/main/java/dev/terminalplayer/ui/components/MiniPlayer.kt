@@ -1,5 +1,8 @@
 package dev.terminalplayer.ui.components
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -15,12 +18,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.terminalplayer.i18n.LocalStrings
 import dev.terminalplayer.playback.PlaybackUiState
 import dev.terminalplayer.ui.theme.Accent
 import dev.terminalplayer.ui.theme.StrokeSoft
@@ -32,7 +37,7 @@ import dev.terminalplayer.ui.theme.TerminalType
  *
  * It is a real `TerminalCard` with its own progress hairline; tapping the body expands the full
  * player, while the two circular glyph buttons keep playback controllable without leaving the
- * library.
+ * library. The progress hairline glides between the 250 ms position ticks instead of stepping.
  */
 @Composable
 fun MiniPlayer(
@@ -44,7 +49,14 @@ fun MiniPlayer(
 ) {
     if (!playback.hasTrack) return
 
+    val strings = LocalStrings.current
     val interactionSource = remember { MutableInteractionSource() }
+    val progress by animateFloatAsState(
+        targetValue = playback.progress,
+        animationSpec = tween(durationMillis = 260, easing = LinearEasing),
+        label = "miniProgress",
+    )
+
     TerminalCard(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -71,13 +83,13 @@ fun MiniPlayer(
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     MarqueeText(
-                        text = playback.title.ifBlank { "UNKNOWN TRACK" },
+                        text = playback.title.ifBlank { strings.unknownTrack },
                         style = TerminalType.marquee,
                         modifier = Modifier.fillMaxWidth(),
                         active = true,
                     )
                     Text(
-                        text = playback.artist.ifBlank { "UNKNOWN ARTIST" },
+                        text = playback.artist.ifBlank { strings.unknownArtist },
                         style = TerminalType.small,
                         color = TextSecondary,
                         maxLines = 1,
@@ -109,7 +121,7 @@ fun MiniPlayer(
             ) {
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth(playback.progress)
+                        .fillMaxWidth(progress)
                         .height(2.dp)
                         .background(Accent),
                 )
