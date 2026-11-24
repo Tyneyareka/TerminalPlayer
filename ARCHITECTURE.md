@@ -11,41 +11,52 @@
                     +--------------+--------------+
                                    |
                     +--------------v--------------+
-                    |   ui/MainScreen (2 tabs)    |
-                    +----+-------------------+----+
-                         |                   |
-          +--------------v-----+   +---------v------------------+
-          | ui/player          |   | ui/visualizer              |
-          | PlayerScreen       |   | VisualizerScreen           |
-          | PlayerViewModel    |   | VisualizerEngine           |
-          +--------+-----------+   | AsciiVisualizer (Canvas)   |
-                   |               +---------+------------------+
-                   |                         |
-                   |             AudioSessionBus (StateFlow<Int>)
-                   |                         ^
-          +--------v-----------+             |
-          | playback           |             |
-          | PlayerConnection   |             |
-          | (MediaController)  |             |
-          +--------+-----------+             |
-                   |  Binder                 |
-          +--------v-------------------------+----------+
-          | playback/PlaybackService                    |
-          | MediaSessionService + MediaSession          |
-          | ExoPlayer (audioSessionId)                  |
-          +--------+------------------------------------+
-                   |
-          +--------v-----------+
-          | data/MusicRepository|  <- MediaStore (content resolver)
-          | data/Track          |
-          +---------------------+
+                    |        ui/MainScreen        |
+                    |  route + bottom nav + mini  |
+                    +--+-------+-------+----------+
+                       |       |       |
+         +-------------v-+  +--v----+  +v-------------------+
+         | ui/home       |  | ui/   |  | ui/player          |
+         | HomeScreen    |  |library|  | NowPlayingScreen   |
+         |               |  |Collect|  | PlayerViewModel    |
+         +---------------+  +-------+  +--------+-----------+
+                                                 |
+                                    +------------v-------------+
+                                    | ui/visualizer            |
+                                    | VisualizerScreen/Engine  |
+                                    | AsciiVisualizer (Canvas) |
+                                    +------------+-------------+
+                                                 |
+                          AudioSessionBus (StateFlow<Int>)
+                                                 ^
+                    +----------------------------+--------------+
+                    | playback/PlayerConnection                   |
+                    | (MediaController)                          |
+                    +---------------------+----------------------+
+                                          | Binder
+                    +---------------------v----------------------+
+                    | playback/PlaybackService                   |
+                    | MediaSessionService + MediaSession         |
+                    | ExoPlayer (audioSessionId)                 |
+                    +---------------------+----------------------+
+                                          |
+                    +---------------------v----------------------+
+                    | data/MusicRepository  -> MediaStore         |
+                    | data/FavoritesRepository -> SharedPreferences|
+                    | data/Track                                  |
+                    +--------------------------------------------+
 ```
 
 ## 1. Слой данных
 
+### 1.1. Track
+
 `data/Track.kt` — иммутабельная модель одного трека (`id`, `title`, `artist`, `album`,
-`durationMs`, `uri`) плюс маппинг в `MediaItem` Media3. Маппинг живёт рядом с моделью, чтобы
+`durationMs`, `uri`, `folder`) плюс маппинг в `MediaItem` Media3. `folder` — последний сегмент
+`RELATIVE_PATH`, нужен для категории `FOLDERS`; маппинг в `MediaItem` живёт рядом с моделью, чтобы
 остальные слои не собирали `MediaMetadata` вручную.
+
+### 1.2. MusicRepository
 
 `data/MusicRepository.kt` — единственное место, которое знает про `MediaStore`:
 
@@ -54,10 +65,45 @@
 * фильтр `IS_MUSIC != 0 AND DURATION > 10000` отсекает рингтоны, уведомления и битые записи;
 * сортировка `TITLE COLLATE NOCASE`, `ARTIST = "<unknown>"` нормализуется в пустую строку
   (UI подставляет `UNKNOWN ARTIST`);
+* `RELATIVE_PATH` читается через `getColumnIndex` (а не `getColumnIndexOrThrow`), потому что
+  часть OEM-провайдеров может не отдать колонку; пустое значение нормализуется в `ROOT`;
 * `refresh()` выполняется на `Dispatchers.IO`, ошибки не пробрасываются наружу, а превращаются в
   терминальное сообщение в `LibraryState.error` (`PERMISSION DENIED // READ_MEDIA_AUDIO` и т.п.).
 
 Состояние библиотеки — `StateFlow<LibraryState>`; экран не выполняет запросы сам.
+
+### 1.3. FavoritesRepository
+
+`data/FavoritesRepository.kt` — единственный «плейлист» приложения: набор MediaStore id в
+`SharedPreferences`.
+
+* `StateFlow<Set<Long>>` читается один раз при создании;
+* `toggle(id)` обновляет и состояние, и `SharedPreferences` (`.apply()`), поэтому избранное
+  переживает перезапуск;
+* id, которых больше нет в MediaStore после пересканирования, просто не попадают в
+  `favoriteTracks` — отдельная чистка не нужна.
+
+### 1.4. Каталог и группировка
+
+`ui/player/PlayerViewModel.kt` склеивает три потока (`MusicRepository.state`, выбранная
+сортировка, `FavoritesRepository.ids`) в один `CatalogUiState`:
+
+```kotlin
+data class CatalogUiState(
+    val tracks: List<Track>,          // отсортированный плоский список
+    val favoriteTracks: List<Track>,  // избранное в том же порядке
+    val albums: List<TrackGroup>,     // группировки для CATEGORIES
+    val artists: List<TrackGroup>,
+    val folders: List<TrackGroup>,
+    val favorites: Set<Long>,
+    val loading / loaded / error / sort,
+)
+```
+
+`TrackGroup` — ключ, заголовок, подпись и список треков. Группировка считается **в ViewModel**,
+а не в композаблах: `LazyColumn` не должен пересобирать карты альбомов/исполнителей на каждый
+кадр. Очередь воспроизведения тоже собирается здесь: `playTrack(track, queue)` ставит в очередь
+именно тот список, который видит пользователь (группу, избранное или всю библиотеку).
 
 ## 2. Слой воспроизведения
 
@@ -99,58 +145,91 @@ onCreate()
   рекомпозиций;
 * команды (`playQueue`, `togglePlayPause`, `next`, `previous`, `seekToFraction`, `seekBy`,
   `toggleShuffle`, `cycleRepeat`) — тонкие обёртки над `MediaController`, включая защиту от
-  `duration == C.TIME_UNSET`.
+  `duration == C.TIME_UNSET`;
+* `playQueue(tracks, startIndex, shuffle)` умеет включать shuffle сразу при старте очереди — так
+  работает карточка `LOCAL MIX`.
 
 `PlaybackUiState` — производные значения для UI: `progress`, `stateLabel`, `repeatLabel`,
 `hasTrack`. Никакой логики в композаблах.
 
 ### 2.3. Жизненный цикл
 
-`TerminalPlayerApp` создаёт `MusicRepository` и `PlayerConnection` в `onCreate` и сразу зовёт
-`connect()`. Это гарантирует, что:
+`TerminalPlayerApp` создаёт `MusicRepository`, `FavoritesRepository` и `PlayerConnection` в
+`onCreate` и сразу зовёт `connect()`. Это гарантирует, что:
 
 * сервис и аудиосессия существуют к моменту открытия вкладки VISUALIZER;
-* поворот экрана/смена вкладки не пересоздают плеер;
+* поворот экрана/смена экрана не пересоздают плеер;
 * `MediaController` живёт столько же, сколько процесс, а звук продолжается в фоне.
 
 ## 3. UI-слой
 
-### 3.1. Терминальная сетка
+### 3.1. Дизайн-система
 
-Ключевая идея: интерфейс — это не «текст на экране», а **символьная сетка**. Метрики одного
-глифа считает `ui/components/MonoMetrics.kt` через `android.graphics.Paint` с
-`Typeface.MONOSPACE` (тот же шрифт, что и `FontFamily.Monospace` в Compose). Отсюда:
+Палитра (`ui/theme/TerminalTheme.kt`): `Ink` — фон, `SurfaceCard` / `SurfaceElevated` — карточки,
+`Stroke` / `StrokeSoft` — бордеры, `TextPrimary` / `TextSecondary` / `TextMuted` — текст,
+`Accent` — единственный синий акцент, `MixStart` / `MixEnd` — градиент карточки `LOCAL MIX`.
+Теней и elevation нет: глубина создаётся одним пикселем бордера.
 
-* `AsciiRule` рисует `=`/`-` ровно до правого края: количество символов = `ширина / advance`;
-* `AsciiProgressBar` сам подбирает число ячеек под доступную ширину, поэтому
-  `[=====>....] 01:20 / 03:45` не переносится и не обрезается;
-* `MarqueeText` измеряет полную ширину строки и включает прокрутку только если она не влезает;
-* визуализатор использует ту же логику (44 колонки, ячейка 2:1).
+Типографика — моноширинная (`FontFamily.Monospace`) на всех уровнях: `headline`, `title`, `body`,
+`bodyStrong`, `small`, `label`, `marquee`, `glyph`, `glyphLarge`. Это не ностальгия, а требование
+вёрстки: ASCII-обложки, линейки и прогресс-метры совпадают по сетке только при одинаковой ширине
+глифа.
 
-Такой подход даёт настоящий «CMD-вид» на любом устройстве и не требует ни одного изображения или
-иконки.
+Поверхности и контролы в `ui/components/TerminalSurface.kt`:
 
-### 3.2. Экраны
+* `TerminalCard` — скруглённая карточка с фоновым цветом и бордером;
+* `GlyphButton` — квадратная/круглая кнопка с одним текстовым глифом;
+* `DashedRingButton` — пунктирное кольцо для `LOCAL MIX`;
+* `SectionTitle`, `Hairline`, `MetaLabel`, `GlyphPill`.
 
-`ui/MainScreen.kt` — «окно терминала»: заголовок, ASCII-табы, контент, футер с мигающим курсором.
-Навигация — `enum TerminalTab` в `rememberSaveable`: две вкладки не оправдывают Navigation
-Compose, а общий composition-scope сохраняет `PlayerViewModel` при переключении.
+`ui/components/AsciiArt.kt` генерирует обложки: `asciiArtLines(seed)` строит поле интенсивности
+по одному из трёх паттернов (шум, кольца, спираль), маскирует его по радиусу и квантует в ramp
+`" .:-=+*#%@"`. `AsciiArtwork` рисует результат по одному `drawText` на глиф через
+`nativeCanvas`, `DotMatrix` — точечную матрицу для плиток категорий.
 
-`ui/player/PlayerScreen.kt` — фиксированная шапка (сейчас играет, прогресс, транспорт, статус) и
-скроллируемый `LazyColumn` с библиотекой. Строка списка — две строки текста; выбранный трек
-инвертирован. Рipple отключён (`indication = null`), чтобы не появлялось скруглённых волн.
+`ui/components/AsciiComponents.kt` остаётся «терминальным» слоем: бегущая строка `MarqueeText`
+(метрики моноширинного глифа, прокрутка только если текст не влезает), панель ошибок `InfoPanel`,
+мигающий курсор. Кнопки перерисованы в пилюли, но логика прежняя.
 
-`ui/player/PlayerViewModel.kt` — склеивает `LibraryState` и выбранную сортировку в
-`LibraryUiState` (`combine` + `stateIn(WhileSubscribed(5s))`), отдаёт команды в
-`PlayerConnection`. Сканирование запускается один раз при получении разрешения
-(`refreshLibraryIfNeeded`).
+### 3.2. Навигация
 
-### 3.3. Тема
+`ui/MainScreen.kt` — четыре маршрута (`HOME`, `COLLECTION`, `PLAYER`, `VISUALIZER`), сохранённые
+в нескольких строках `rememberSaveable` (маршрут, тип коллекции, ключ открытой группы и экран,
+из которого открыли плеер). Navigation Compose не используется: четыре экрана не оправдывают
+библиотеку, а общий composition-scope сохраняет `PlayerViewModel` при переходах.
 
-`ui/theme/TerminalTheme.kt`: чёрный `background`, фосфорно-зелёный `primary`, набор плоских
-констант и один `TextStyle`-скелет (`body`, `small`, `label`, `title`, `marquee`, `huge`).
-Material3 присутствует только как пустая тема — ни `Button`, ни `Card`, ни `Icon` не
-используются.
+`BackHandler` ведёт себя как ожидает пользователь: из группы — к списку групп, из коллекции и
+плеера — на главную. Нижняя навигация и мини-плеер рисуются в `MainScreen`, поэтому доступны на
+главной, в коллекциях и визуализаторе, но скрываются на полноэкранном плеере.
+
+### 3.3. Экраны
+
+**`ui/home/HomeScreen.kt`** — главная: строка поиска (пока декоративная), кнопка `[=]` с
+раскрывающейся строкой сортировки, карточка `MY TRACKS` (три трека), карточка `LOCAL MIX`,
+сетка `CATEGORIES` 2×2. Список прокручивается, мини-плеер и нижняя навигация остаются на месте.
+Состояния библиотеки (нет разрешения, ошибка, скан, пустая библиотека) показываются внутри
+карточки `MY TRACKS`, поэтому главная никогда не бывает пустым экраном.
+
+**`ui/library/CollectionScreen.kt`** — один экран на три режима: вся библиотека (`kind = null`),
+список групп и треки выбранной группы. Группы — карточки с ASCII-глифом категории; треки —
+`LazyColumn` с обложками и подсказкой про долгое нажатие. Долгое нажатие на трек переключает
+избранное в любом списке.
+
+**`ui/player/NowPlayingScreen.kt`** — ASCII-обложка во всю ширину, бегущее название,
+исполнитель/альбом, графический seek-bar (тап + перетаскивание) и транспорт. `[*]` в шапке —
+избранное, внизу — строка `ST / SHF / RPT / SES`. Экран скроллируется, чтобы транспорт оставался
+доступен на невысоких телефонах.
+
+**`ui/visualizer/VisualizerScreen.kt`** — заголовок в новом стиле, дальше прежняя цепочка
+`AudioSessionBus` → `VisualizerEngine` → `AsciiVisualizer`. Палитра Canvas-рендера переведена на
+`TextSecondary` + `AccentBright`.
+
+### 3.4. Мини-плеер
+
+`ui/components/MiniPlayer.kt` — карточка над нижней навигацией: обложка, `MarqueeText`, play/pause
+и next, плюс двухпиксельная полоса прогресса по нижней границе. Тап по телу карточки открывает
+`NowPlayingScreen`; вложенные кнопки обрабатывают свои клики и не всплывают наверх. Если трека
+нет, композабл вообще не эмитит контент, поэтому навигация прижимается к низу.
 
 ## 4. Визуализатор
 
@@ -259,11 +338,13 @@ AsciiVisualizer (Canvas, char grid 44 x N)
 * `FOREGROUND_SERVICE` + `FOREGROUND_SERVICE_MEDIA_PLAYBACK` — манифест, без рантайм-запроса.
 
 Разрешения не запрашиваются на старте приложения: сначала пользователь видит интерфейс и
-объяснение, потом системный диалог.
+объяснение, потом системный диалог. Карточка `MY TRACKS` на главной — это и есть объяснение.
 
 ## 7. Производительность
 
 * визуализатор: ~3000 операций записи в `CharArray` + ~80 `drawText` на кадр, 60+ fps;
+* каталог и группировки пересчитываются только при изменении библиотеки, сортировки или избранного;
+* ASCII-обложки генерируются через `remember(seed)` — скролл не пересоздаёт символьные поля;
 * список библиотеки — `LazyColumn` с ключом по `id`;
 * позиция обновляется 4 раза в секунду (а не каждый кадр), поэтому верхняя часть экрана не
   рекомпозируется на каждом VSYNC;
@@ -272,8 +353,10 @@ AsciiVisualizer (Canvas, char grid 44 x N)
 
 ## 8. Как расширять
 
-* **Плейлисты/поиск** — добавить поля в `LibraryState`, фильтрацию в `PlayerViewModel`, оставив
-  `MusicRepository` единственным источником треков.
+* **Поиск** — добавить `query` в `CatalogUiState`, фильтрацию в `PlayerViewModel` и сделать
+  строку поиска настоящим `BasicTextField`.
+* **Пользовательские плейлисты** — заменить `Set<Long>` в `FavoritesRepository` на список
+  плейлистов (`id`, `name`, `trackIds`) и добавить группу в `CatalogUiState`.
 * **Эквалайзер** — второй `AudioEffect` на тот же `audioSessionId`; публиковать его состояние
   через отдельный bus по образцу `AudioSessionBus`.
 * **Кастомный шрифт** — `TerminalType.mono` (см. README); метрики и Canvas используют
@@ -282,13 +365,15 @@ AsciiVisualizer (Canvas, char grid 44 x N)
 * **Другой визуализатор** — реализовать альтернативный `DrawScope`-рендер, `VisualizerEngine`
   останется тем же.
 * **Тесты** — `VisualizerEngine` не зависит от Android UI (кроме самого `Visualizer`), FFT-маппинг
-  и огибающие можно покрыть unit-тестами, если вынести их в чистые функции.
+  и огибающие можно покрыть unit-тестами, если вынести их в чистые функции. Генератор ASCII-обложек
+  (`asciiArtLines`) — чистый Kotlin и тестируется без Android.
 
 ## 9. Осознанные ограничения
 
 * Только MediaStore, без SAF-доступа к отдельным папкам.
-* Нет обложек и иконок — это противоречит ASCII-стилистике.
+* Поиск пока декоративный — это следующий шаг, а не забытая функция.
+* Плейлисты ограничены избранным.
+* Нет обложек из тегов: ASCII-обложки генерируются детерминированно, поэтому один и тот же трек
+  всегда выглядит одинаково.
 * `MediaController` живёт весь процесс: для плеера это плюс, для «библиотеки на 100k треков»
   понадобился бы `MediaBrowser` + пагинация.
-* UI-строка статуса и HUD сокращены до фиксированной ширины, чтобы не ломать сетку на узких
-  экранах.

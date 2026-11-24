@@ -16,8 +16,8 @@ import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import dev.terminalplayer.core.Ascii
-import dev.terminalplayer.ui.theme.TerminalBright
-import dev.terminalplayer.ui.theme.TerminalGreenSoft
+import dev.terminalplayer.ui.theme.AccentBright
+import dev.terminalplayer.ui.theme.TextSecondary
 import kotlinx.coroutines.isActive
 import java.util.Locale
 import kotlin.math.PI
@@ -298,7 +298,7 @@ private fun DrawScope.drawAsciiFrame(
     drawIntoCanvas { canvas ->
         val nativeCanvas = canvas.nativeCanvas
 
-        paint.color = TerminalGreenSoft.toArgb()
+        paint.color = TextSecondary.toArgb()
         buffer.forEachRow(hot = false) { row, startColumn, text ->
             nativeCanvas.drawText(
                 text,
@@ -308,7 +308,7 @@ private fun DrawScope.drawAsciiFrame(
             )
         }
 
-        paint.color = TerminalBright.toArgb()
+        paint.color = AccentBright.toArgb()
         buffer.forEachRow(hot = true) { row, startColumn, text ->
             nativeCanvas.drawText(
                 text,

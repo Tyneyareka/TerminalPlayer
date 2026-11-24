@@ -8,13 +8,13 @@
     <!-- ">_" prompt drawn with strokes only: no bitmaps, no rounded corners. -->
     <path
         android:pathData="M34,36 L57,52 L34,68"
-        android:strokeColor="#FF39FF14"
+        android:strokeColor="#FFA9C4FF"
         android:strokeWidth="6"
         android:strokeLineCap="square"
         android:strokeLineJoin="miter" />
     <path
         android:pathData="M62,70 L80,70"
-        android:strokeColor="#FF39FF14"
+        android:strokeColor="#FFA9C4FF"
         android:strokeWidth="6"
         android:strokeLineCap="square" />
 </vector>

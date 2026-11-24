@@ -8,6 +8,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -26,6 +27,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -33,6 +35,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
@@ -41,15 +44,17 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import dev.terminalplayer.core.Ascii
-import dev.terminalplayer.ui.theme.TerminalAmber
-import dev.terminalplayer.ui.theme.TerminalBlack
-import dev.terminalplayer.ui.theme.TerminalBright
-import dev.terminalplayer.ui.theme.TerminalGray
-import dev.terminalplayer.ui.theme.TerminalGreen
-import dev.terminalplayer.ui.theme.TerminalGreenDim
-import dev.terminalplayer.ui.theme.TerminalGreenSoft
+import dev.terminalplayer.ui.theme.Accent
+import dev.terminalplayer.ui.theme.Stroke
+import dev.terminalplayer.ui.theme.StrokeSoft
+import dev.terminalplayer.ui.theme.SurfaceCard
+import dev.terminalplayer.ui.theme.TextMuted
+import dev.terminalplayer.ui.theme.TextPrimary
+import dev.terminalplayer.ui.theme.TextSecondary
 import dev.terminalplayer.ui.theme.TerminalType
+import dev.terminalplayer.ui.theme.Warning
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlin.math.roundToInt
@@ -62,7 +67,7 @@ import kotlin.math.roundToInt
 fun AsciiRule(
     modifier: Modifier = Modifier,
     char: Char = '-',
-    color: Color = TerminalGreenDim,
+    color: Color = StrokeSoft,
     style: TextStyle = TerminalType.small,
 ) {
     val metrics = rememberMonoMetrics(style)
@@ -79,10 +84,10 @@ fun AsciiRule(
 }
 
 /**
- * A tap target that looks like a CMD button: `[ > ]`, `[ || ]`, `[ >> ]`.
+ * A tap target that looks like a CMD button: `[ > ]`, `[ || ]`, `[ RETRY ]`.
  *
- * Active/disabled states are expressed through inverse video and colour, never through icons,
- * shapes or elevation. The ripple is disabled on purpose.
+ * Active/disabled states are expressed through fill and colour, never through icons or elevation.
+ * The button is a small rounded pill so it sits naturally inside the new card layout.
  */
 @Composable
 fun AsciiButton(
@@ -91,21 +96,24 @@ fun AsciiButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     active: Boolean = false,
-    color: Color = TerminalGreen,
+    color: Color = Accent,
     style: TextStyle = TerminalType.body,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
     val inverted = enabled && (active || pressed)
+    val shape = RoundedCornerShape(12.dp)
     val textColor = when {
-        inverted -> TerminalBlack
-        enabled -> color
-        else -> TerminalGray
+        !enabled -> TextMuted
+        inverted -> TextPrimary
+        else -> TextSecondary
     }
 
     Box(
         modifier = modifier
-            .background(if (inverted) color else Color.Transparent)
+            .clip(shape)
+            .background(if (inverted) color else SurfaceCard)
+            .border(1.dp, if (inverted) color else Stroke, shape)
             .then(
                 if (enabled) {
                     Modifier.clickable(
@@ -118,24 +126,24 @@ fun AsciiButton(
                     Modifier
                 },
             )
-            .padding(horizontal = 2.dp, vertical = 6.dp),
+            .padding(horizontal = 14.dp, vertical = 8.dp),
     ) {
         Text(
             text = label,
-            style = style.copy(color = textColor),
+            style = style.copy(fontSize = 12.sp, color = textColor),
             maxLines = 1,
             softWrap = false,
         )
     }
 }
 
-/** `> TITLE ====...` section header, the terminal equivalent of an app bar. */
+/** `TITLE` section header in the same visual language as the home screen sections. */
 @Composable
 fun SectionHeader(
     title: String,
     modifier: Modifier = Modifier,
     trailing: String? = null,
-    accent: Color = TerminalGreen,
+    accent: Color = TextPrimary,
 ) {
     Column(modifier.fillMaxWidth()) {
         Row(
@@ -143,7 +151,7 @@ fun SectionHeader(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "> $title",
+                text = title,
                 style = TerminalType.title,
                 color = accent,
                 maxLines = 1,
@@ -154,8 +162,8 @@ fun SectionHeader(
                 Row(Modifier.weight(1f, fill = true), horizontalArrangement = Arrangement.End) {
                     Text(
                         text = trailing,
-                        style = TerminalType.small,
-                        color = TerminalGreenDim,
+                        style = TerminalType.label,
+                        color = TextMuted,
                         maxLines = 1,
                         softWrap = false,
                     )
@@ -164,7 +172,8 @@ fun SectionHeader(
                 Spacer(Modifier.weight(1f))
             }
         }
-        AsciiRule(char = '=', color = accent.copy(alpha = 0.45f))
+        Spacer(Modifier.height(6.dp))
+        AsciiRule(char = '-', color = StrokeSoft)
     }
 }
 
@@ -230,7 +239,7 @@ fun MarqueeText(
 /**
  * `[=====>........] 01:20 / 03:45`.
  *
- * The amount of cells adapts to the available width; tapping the bar seeks.
+ * Kept for the visualizer/debug states; the full player uses a graphical seek bar instead.
  */
 @Composable
 fun AsciiProgressBar(
@@ -263,12 +272,17 @@ fun AsciiProgressBar(
                     }
                 },
             ) {
-                Text(text = bar, style = style, maxLines = 1, softWrap = false)
+                Text(
+                    text = bar,
+                    style = style.copy(color = TextPrimary),
+                    maxLines = 1,
+                    softWrap = false,
+                )
             }
             Text(
                 text = "  $timeLabel",
                 style = TerminalType.small,
-                color = TerminalGreenDim,
+                color = TextSecondary,
                 maxLines = 1,
                 softWrap = false,
             )
@@ -276,30 +290,38 @@ fun AsciiProgressBar(
     }
 }
 
-/** Terminal-styled explanation / error panel with an ASCII action row. */
+/** Dark explanation / error panel with an action row. */
 @Composable
 fun InfoPanel(
     code: String,
     message: String,
     modifier: Modifier = Modifier,
-    tone: Color = TerminalAmber,
+    tone: Color = Warning,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
-    Column(modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(SurfaceCard)
+            .border(1.dp, StrokeSoft, RoundedCornerShape(16.dp))
+            .padding(16.dp),
+    ) {
         Text(
             text = "! $code",
-            style = TerminalType.title,
-            color = tone,
+            style = TerminalType.bodyStrong,
+            color = if (tone == Warning) Warning else tone,
             maxLines = 1,
             softWrap = false,
         )
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(8.dp))
         Text(
             text = message,
             style = TerminalType.small,
-            color = TerminalGreenDim,
+            color = TextSecondary,
         )
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(14.dp))
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -312,7 +334,7 @@ fun InfoPanel(
 @Composable
 fun BlinkingCursor(
     modifier: Modifier = Modifier,
-    color: Color = TerminalGreen,
+    color: Color = TextSecondary,
 ) {
     val transition = rememberInfiniteTransition(label = "cursor")
     val phase by transition.animateFloat(
@@ -332,18 +354,18 @@ fun BlinkingCursor(
     )
 }
 
-/** `LABEL  VALUE` line used by the status blocks. */
+/** `LABEL  VALUE` line used by status blocks. */
 @Composable
 fun TerminalKeyValue(
     key: String,
     value: String,
     modifier: Modifier = Modifier,
-    keyColor: Color = TerminalGray,
-    valueColor: Color = TerminalBright,
+    keyColor: Color = TextMuted,
+    valueColor: Color = TextPrimary,
 ) {
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
-        Text(text = "$key ", style = TerminalType.small, color = keyColor, maxLines = 1)
-        Text(text = value, style = TerminalType.small, color = valueColor, maxLines = 1)
+        Text(text = "$key ", style = TerminalType.label, color = keyColor, maxLines = 1)
+        Text(text = value, style = TerminalType.label, color = valueColor, maxLines = 1)
     }
 }
 
@@ -351,7 +373,7 @@ fun TerminalKeyValue(
 @Composable
 fun ColumnScope.StateBlock(
     lines: List<String>,
-    color: Color = TerminalGreenDim,
+    color: Color = TextSecondary,
 ) {
     Column(Modifier.fillMaxWidth().padding(top = 6.dp)) {
         lines.forEach { line ->
@@ -359,7 +381,7 @@ fun ColumnScope.StateBlock(
         }
         Spacer(Modifier.height(6.dp))
         Row {
-            Text(text = "> ", style = TerminalType.small, color = TerminalGreenSoft)
+            Text(text = "> ", style = TerminalType.small, color = TextMuted)
             BlinkingCursor()
         }
     }

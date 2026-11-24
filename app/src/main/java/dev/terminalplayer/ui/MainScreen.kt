@@ -1,139 +1,162 @@
 package dev.terminalplayer.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import dev.terminalplayer.ui.components.AsciiButton
-import dev.terminalplayer.ui.components.AsciiRule
-import dev.terminalplayer.ui.components.BlinkingCursor
-import dev.terminalplayer.ui.player.PlayerScreen
-import dev.terminalplayer.ui.theme.TerminalBlack
-import dev.terminalplayer.ui.theme.TerminalGray
-import dev.terminalplayer.ui.theme.TerminalGreen
-import dev.terminalplayer.ui.theme.TerminalGreenDim
-import dev.terminalplayer.ui.theme.TerminalGreenSoft
-import dev.terminalplayer.ui.theme.TerminalType
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import dev.terminalplayer.ui.components.BottomNav
+import dev.terminalplayer.ui.components.MiniPlayer
+import dev.terminalplayer.ui.components.RootTab
+import dev.terminalplayer.ui.components.audioLibraryPermission
+import dev.terminalplayer.ui.components.audioLibraryPermissions
+import dev.terminalplayer.ui.components.rememberPermissionStateFor
+import dev.terminalplayer.ui.home.HomeScreen
+import dev.terminalplayer.ui.library.CollectionKind
+import dev.terminalplayer.ui.library.CollectionScreen
+import dev.terminalplayer.ui.player.NowPlayingScreen
+import dev.terminalplayer.ui.player.PlayerViewModel
+import dev.terminalplayer.ui.theme.Ink
 import dev.terminalplayer.ui.visualizer.VisualizerScreen
 
-private enum class TerminalTab(val label: String) {
-    PLAYER("PLAYER"),
-    VISUALIZER("VISUALIZER"),
+private enum class Route {
+    HOME,
+    COLLECTION,
+    PLAYER,
+    VISUALIZER,
 }
 
 /**
- * Root scaffold of the terminal: window chrome, tab bar, footer prompt and the two screens.
+ * Root of the new shell: library home, collection browser, full player and visualizer.
  *
- * Navigation is a single `enum` state: two tabs do not justify a navigation library, and this way
- * both screens stay inside the same composition scope (the player ViewModel survives tab switches).
+ * Navigation is still a couple of `rememberSaveable` strings - a navigation library would cost more
+ * than the four destinations need, and keeping everything in one composition preserves the shared
+ * `PlayerViewModel` and the playback connection across screens.
+ *
+ * The bottom segmented control and the mini player live here so every screen except the full player
+ * gets them for free.
  */
 @Composable
-fun MainScreen() {
-    var selectedTab by rememberSaveable { mutableStateOf(TerminalTab.PLAYER) }
+fun MainScreen(viewModel: PlayerViewModel = viewModel()) {
+    val playback by viewModel.playback.collectAsStateWithLifecycle()
+
+    var routeName by rememberSaveable { mutableStateOf(Route.HOME.name) }
+    var collectionName by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedGroupKey by rememberSaveable { mutableStateOf<String?>(null) }
+    var playerOriginName by rememberSaveable { mutableStateOf(Route.HOME.name) }
+
+    val route = Route.entries.firstOrNull { it.name == routeName } ?: Route.HOME
+    val collectionKind = collectionName?.let { name ->
+        CollectionKind.entries.firstOrNull { it.name == name }
+    }
+
+    val permission = rememberPermissionStateFor(
+        requiredPermission = audioLibraryPermission(),
+        requestedPermissions = audioLibraryPermissions(),
+    )
+
+    LaunchedEffect(permission.granted) {
+        if (permission.granted) viewModel.refreshLibraryIfNeeded()
+    }
+
+    fun openCollection(kind: CollectionKind?) {
+        collectionName = kind?.name
+        selectedGroupKey = null
+        routeName = Route.COLLECTION.name
+    }
+
+    fun openPlayer() {
+        playerOriginName = routeName
+        routeName = Route.PLAYER.name
+    }
+
+    fun closePlayer() {
+        routeName = playerOriginName
+    }
+
+    BackHandler(enabled = route != Route.HOME) {
+        when (route) {
+            Route.COLLECTION -> {
+                if (selectedGroupKey != null) {
+                    selectedGroupKey = null
+                } else {
+                    routeName = Route.HOME.name
+                }
+            }
+            Route.PLAYER -> closePlayer()
+            else -> routeName = Route.HOME.name
+        }
+    }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(TerminalBlack)
-            .windowInsetsPadding(WindowInsets.safeDrawing)
-            .padding(horizontal = 10.dp),
+            .background(Ink)
+            .windowInsetsPadding(WindowInsets.safeDrawing),
     ) {
-        AppHeader()
-        TabBar(
-            selected = selectedTab,
-            onSelect = { selectedTab = it },
-        )
-
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            when (selectedTab) {
-                TerminalTab.PLAYER -> PlayerScreen()
-                TerminalTab.VISUALIZER -> VisualizerScreen(
-                    onOpenPlayer = { selectedTab = TerminalTab.PLAYER },
+            when (route) {
+                Route.HOME -> HomeScreen(
+                    viewModel = viewModel,
+                    permission = permission,
+                    onOpenPlayer = { openPlayer() },
+                    onOpenCollection = { kind -> openCollection(kind) },
+                )
+                Route.COLLECTION -> CollectionScreen(
+                    kind = collectionKind,
+                    selectedGroupKey = selectedGroupKey,
+                    onSelectGroup = { key -> selectedGroupKey = key },
+                    onBack = { routeName = Route.HOME.name },
+                    onOpenPlayer = { openPlayer() },
+                    viewModel = viewModel,
+                    permission = permission,
+                )
+                Route.PLAYER -> NowPlayingScreen(
+                    viewModel = viewModel,
+                    onBack = { closePlayer() },
+                )
+                Route.VISUALIZER -> VisualizerScreen(
+                    onOpenPlayer = { openPlayer() },
                 )
             }
         }
 
-        AppFooter()
-    }
-}
-
-@Composable
-private fun AppHeader() {
-    Column(Modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = "TERMINALPLAYER",
-                style = TerminalType.title,
-                color = TerminalGreen,
-                maxLines = 1,
-                softWrap = false,
+        if (route != Route.PLAYER) {
+            MiniPlayer(
+                playback = playback,
+                onOpen = { openPlayer() },
+                onTogglePlayPause = viewModel::togglePlayPause,
+                onNext = viewModel::next,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
             )
-            Spacer(Modifier.weight(1f))
-            Text(
-                text = "v1.0.0",
-                style = TerminalType.small,
-                color = TerminalGreenDim,
-                maxLines = 1,
+            BottomNav(
+                selected = if (route == Route.VISUALIZER) RootTab.VISUALIZER else RootTab.LIBRARY,
+                onSelect = { tab ->
+                    when (tab) {
+                        RootTab.LIBRARY -> {
+                            selectedGroupKey = null
+                            routeName = Route.HOME.name
+                        }
+                        RootTab.VISUALIZER -> routeName = Route.VISUALIZER.name
+                    }
+                },
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
             )
         }
-        Text(
-            text = "LOCAL AUDIO TERMINAL // MEDIA3 EXOPLAYER",
-            style = TerminalType.small,
-            color = TerminalGray,
-            maxLines = 1,
-            softWrap = false,
-        )
-        AsciiRule(char = '=', color = TerminalGreenSoft)
-    }
-}
-
-@Composable
-private fun TabBar(selected: TerminalTab, onSelect: (TerminalTab) -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(top = 6.dp)) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            TerminalTab.entries.forEach { tab ->
-                val isSelected = tab == selected
-                AsciiButton(
-                    label = if (isSelected) "[ ${tab.label} ]" else "  ${tab.label}  ",
-                    onClick = { onSelect(tab) },
-                    active = isSelected,
-                )
-            }
-        }
-        AsciiRule(char = '-', color = TerminalGreenDim)
-    }
-}
-
-@Composable
-private fun AppFooter() {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(text = "> ", style = TerminalType.small, color = TerminalGreenDim)
-        Text(text = "READY", style = TerminalType.small, color = TerminalGreenDim)
-        BlinkingCursor()
-        Spacer(Modifier.weight(1f))
-        Text(text = "API 31+", style = TerminalType.small, color = TerminalGray)
     }
 }

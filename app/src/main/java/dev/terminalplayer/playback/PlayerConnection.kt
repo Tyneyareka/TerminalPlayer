@@ -89,11 +89,12 @@ class PlayerConnection(context: Context) {
         runCatching { block(mediaController) }
     }
 
-    fun playQueue(tracks: List<Track>, startIndex: Int) {
+    fun playQueue(tracks: List<Track>, startIndex: Int, shuffle: Boolean = false) {
         if (tracks.isEmpty()) return
         val items: List<MediaItem> = tracks.map { it.toMediaItem() }
         val index = startIndex.coerceIn(0, items.lastIndex)
         withController { mediaController ->
+            mediaController.shuffleModeEnabled = shuffle
             mediaController.setMediaItems(items, index, 0L)
             mediaController.prepare()
             mediaController.play()

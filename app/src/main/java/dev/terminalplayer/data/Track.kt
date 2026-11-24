@@ -16,6 +16,8 @@ data class Track(
     val album: String,
     val durationMs: Long,
     val uri: String,
+    /** Folder name as reported by MediaStore (`RELATIVE_PATH`), empty when unknown. */
+    val folder: String = "",
 ) {
     val artistLabel: String
         get() = artist.ifBlank { "UNKNOWN ARTIST" }

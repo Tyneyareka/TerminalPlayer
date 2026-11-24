@@ -79,6 +79,7 @@ class MusicRepository(private val context: Context) {
             MediaStore.Audio.Media.ALBUM,
             MediaStore.Audio.Media.DURATION,
             MediaStore.Audio.Media.DISPLAY_NAME,
+            MediaStore.MediaColumns.RELATIVE_PATH,
         )
         val selection =
             "${MediaStore.Audio.Media.IS_MUSIC} != 0 AND ${MediaStore.Audio.Media.DURATION} > 10000"
@@ -93,6 +94,7 @@ class MusicRepository(private val context: Context) {
                 val albumColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
                 val durationColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
                 val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DISPLAY_NAME)
+                val pathColumn = cursor.getColumnIndex(MediaStore.MediaColumns.RELATIVE_PATH)
 
                 while (cursor.moveToNext()) {
                     val id = cursor.getLong(idColumn)
@@ -108,6 +110,8 @@ class MusicRepository(private val context: Context) {
                     val rawArtist = cursor.getString(artistColumn).orEmpty().trim()
                     val artist = if (rawArtist.equals("<unknown>", ignoreCase = true)) "" else rawArtist
                     val album = cursor.getString(albumColumn).orEmpty().trim()
+                    val rawFolder = if (pathColumn >= 0) cursor.getString(pathColumn).orEmpty() else ""
+                    val folder = rawFolder.trimEnd('/').substringAfterLast('/').trim()
 
                     tracks += Track(
                         id = id,
@@ -116,6 +120,7 @@ class MusicRepository(private val context: Context) {
                         album = album,
                         durationMs = duration,
                         uri = ContentUris.withAppendedId(collection, id).toString(),
+                        folder = folder,
                     )
                 }
             }
