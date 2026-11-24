@@ -24,6 +24,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.C
+import dev.terminalplayer.i18n.LocalStrings
 import dev.terminalplayer.playback.AudioSessionBus
 import dev.terminalplayer.ui.components.AsciiButton
 import dev.terminalplayer.ui.components.InfoPanel
@@ -68,6 +69,7 @@ fun VisualizerScreen(onOpenPlayer: () -> Unit) {
 
 @Composable
 private fun VisualizerHeader() {
+    val strings = LocalStrings.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -76,14 +78,14 @@ private fun VisualizerHeader() {
     ) {
         Column(Modifier.weight(1f)) {
             Text(
-                text = "VISUALIZER",
+                text = strings.visualizerTitle,
                 style = TerminalType.headline,
                 color = TextPrimary,
                 maxLines = 1,
             )
             Spacer(Modifier.height(2.dp))
             Text(
-                text = "LIVE FFT // WAVEFORM",
+                text = strings.visualizerSubtitle,
                 style = TerminalType.label,
                 color = TextMuted,
                 maxLines = 1,
@@ -91,7 +93,7 @@ private fun VisualizerHeader() {
         }
         Spacer(Modifier.width(10.dp))
         Text(
-            text = "44 COL",
+            text = strings.visualizerColumns,
             style = TerminalType.label,
             color = TextMuted,
             maxLines = 1,
@@ -101,6 +103,7 @@ private fun VisualizerHeader() {
 
 @Composable
 private fun VisualizerStage(sessionId: Int, modifier: Modifier) {
+    val strings = LocalStrings.current
     val engine = remember(sessionId) { VisualizerEngine(sessionId) }
     var failure by remember(engine) { mutableStateOf<String?>(null) }
 
@@ -118,7 +121,7 @@ private fun VisualizerStage(sessionId: Int, modifier: Modifier) {
                 code = "E_VISUALIZER",
                 message = message,
                 tone = Danger,
-                actions = { AsciiButton("[ RETRY ]", onClick = { failure = engine.start() }) },
+                actions = { AsciiButton(strings.retryAction, onClick = { failure = engine.start() }) },
             )
         } else {
             AsciiVisualizer(
@@ -131,27 +134,26 @@ private fun VisualizerStage(sessionId: Int, modifier: Modifier) {
 
 @Composable
 private fun VisualizerPermission(permission: PermissionState) {
+    val strings = LocalStrings.current
     val context = LocalContext.current
     InfoPanel(
         code = "E_AUDIO_CAPTURE",
-        message = "The visualizer taps the app's own playback session through " +
-            "android.media.audiofx.Visualizer. Android requires RECORD_AUDIO for that. " +
-            "No microphone audio is recorded, stored or sent anywhere.",
+        message = strings.visualizerPermissionMessage,
         actions = {
-            AsciiButton("[ GRANT ]", onClick = permission.request)
-            AsciiButton("[ SETTINGS ]", onClick = { context.openAppSettings() })
+            AsciiButton(strings.grantAction, onClick = permission.request)
+            AsciiButton(strings.settingsAction, onClick = { context.openAppSettings() })
         },
     )
 }
 
 @Composable
 private fun VisualizerWaiting(onOpenPlayer: () -> Unit) {
+    val strings = LocalStrings.current
     InfoPanel(
         code = "E_NO_AUDIO_SESSION",
-        message = "The playback service has not published an audio session yet. " +
-            "Start a track, then return to this tab.",
+        message = strings.visualizerNoSessionMessage,
         tone = Warning,
-        actions = { AsciiButton("[ OPEN PLAYER ]", onClick = onOpenPlayer) },
+        actions = { AsciiButton(strings.openPlayerAction, onClick = onOpenPlayer) },
     )
 }
 

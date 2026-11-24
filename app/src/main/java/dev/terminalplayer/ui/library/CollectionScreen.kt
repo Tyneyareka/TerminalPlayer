@@ -1,9 +1,19 @@
 package dev.terminalplayer.ui.library
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,17 +32,20 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.activity.compose.BackHandler
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.terminalplayer.core.Ascii
 import dev.terminalplayer.data.Track
+import dev.terminalplayer.i18n.AppStrings
+import dev.terminalplayer.i18n.LocalStrings
 import dev.terminalplayer.playback.PlaybackUiState
 import dev.terminalplayer.ui.components.AsciiButton
 import dev.terminalplayer.ui.components.GlyphButton
@@ -43,6 +56,9 @@ import dev.terminalplayer.ui.components.PermissionState
 import dev.terminalplayer.ui.components.TerminalCard
 import dev.terminalplayer.ui.components.TrackRow
 import dev.terminalplayer.ui.components.openAppSettings
+import dev.terminalplayer.ui.motion.LocalMotionEnabled
+import dev.terminalplayer.ui.motion.animatedPressScale
+import dev.terminalplayer.ui.motion.scaleLayer
 import dev.terminalplayer.ui.player.CatalogUiState
 import dev.terminalplayer.ui.player.PlayerViewModel
 import dev.terminalplayer.ui.player.TrackGroup
@@ -52,7 +68,6 @@ import dev.terminalplayer.ui.theme.TextMuted
 import dev.terminalplayer.ui.theme.TextPrimary
 import dev.terminalplayer.ui.theme.TextSecondary
 import dev.terminalplayer.ui.theme.TerminalType
-import androidx.compose.ui.platform.LocalContext
 
 /**
  * One collection screen, three modes:
@@ -62,7 +77,8 @@ import androidx.compose.ui.platform.LocalContext
  *  * `kind` + group selected - the tracks of that group.
  *
  * The selected group lives in the navigation state of `MainScreen`, so system back behaves
- * predictably: first it leaves the group, then the collection.
+ * predictably: first it leaves the group, then the collection. Opening a group slides the new list
+ * in from the side while the old one leaves, and the header title crossfades with it.
  */
 @Composable
 fun CollectionScreen(
@@ -74,23 +90,24 @@ fun CollectionScreen(
     viewModel: PlayerViewModel,
     permission: PermissionState,
 ) {
+    val strings = LocalStrings.current
+    val motion = LocalMotionEnabled.current
     val catalog by viewModel.catalog.collectAsStateWithLifecycle()
     val playback by viewModel.playback.collectAsStateWithLifecycle()
 
-    val groups = remember(kind, catalog) { groupsFor(kind, catalog) }
+    val groups = remember(kind, catalog, strings) { groupsFor(kind, catalog, strings) }
     val activeGroup = groups.firstOrNull { it.key == selectedGroupKey }
 
-    val tracks: List<Track> = when {
-        kind == null -> catalog.tracks
-        activeGroup != null -> activeGroup.tracks
-        else -> emptyList()
-    }
-
-    val title = activeGroup?.title ?: kind?.title ?: "ALL TRACKS"
+    val title = activeGroup?.let { groupTitle(kind, it, strings) }
+        ?: kind?.localizedTitle(strings)
+        ?: strings.allTracks
     val subtitle = when {
-        kind == null -> "${tracks.size} TRACKS // ${Ascii.clock(tracks.sumOf { it.durationMs })}"
-        activeGroup != null -> "${tracks.size} TRACKS // ${Ascii.clock(activeGroup.durationMs)}"
-        else -> "${groups.size} GROUPS"
+        kind == null ->
+            "${strings.tracksCount(catalog.tracks.size)} // " +
+                Ascii.clock(catalog.tracks.sumOf { it.durationMs })
+        activeGroup != null ->
+            "${strings.tracksCount(activeGroup.tracks.size)} // ${Ascii.clock(activeGroup.durationMs)}"
+        else -> strings.groupsCount(groups.size)
     }
 
     BackHandler(enabled = activeGroup != null) { onSelectGroup(null) }
@@ -104,29 +121,61 @@ fun CollectionScreen(
             },
         )
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            when {
-                !permission.granted -> LibraryPermission(permission)
-                kind == null || activeGroup != null -> TrackList(
-                    tracks = tracks,
-                    playback = playback,
-                    favorites = catalog.favorites,
-                    emptyTitle = if (kind == CollectionKind.PLAYLISTS) "NO FAVORITES YET" else "NO TRACKS",
-                    emptyMessage = when (kind) {
-                        CollectionKind.PLAYLISTS ->
-                            "Long-press any track to save it here."
-                        else -> "Scan the library again from the home screen."
-                    },
-                    onPlay = { track ->
-                        viewModel.playTrack(track, tracks)
-                        onOpenPlayer()
-                    },
-                    onToggleFavorite = viewModel::toggleFavorite,
-                )
-                else -> GroupList(
-                    kind = kind,
-                    groups = groups,
-                    onOpenGroup = { onSelectGroup(it.key) },
-                )
+            AnimatedContent(
+                targetState = selectedGroupKey,
+                transitionSpec = {
+                    if (!motion) {
+                        fadeIn(tween(0)) togetherWith fadeOut(tween(0))
+                    } else {
+                        val direction = if (targetState != null) 1 else -1
+                        (
+                            fadeIn(tween(200)) +
+                                slideInHorizontally(tween(260)) { width -> direction * width / 8 }
+                        ) togetherWith (
+                            fadeOut(tween(140)) +
+                                slideOutHorizontally(tween(220)) { width -> -direction * width / 12 }
+                        )
+                    }
+                },
+                label = "collectionBody",
+                modifier = Modifier.fillMaxSize(),
+            ) { groupKey ->
+                val currentKind = kind
+                val group = groups.firstOrNull { it.key == groupKey }
+                val trackMode = currentKind == null || group != null
+                val shownTracks: List<Track> = when {
+                    currentKind == null -> catalog.tracks
+                    group != null -> group.tracks
+                    else -> emptyList()
+                }
+                when {
+                    !permission.granted -> LibraryPermission(permission)
+                    trackMode -> TrackList(
+                        tracks = shownTracks,
+                        playback = playback,
+                        favorites = catalog.favorites,
+                        emptyTitle = if (currentKind == CollectionKind.PLAYLISTS) {
+                            strings.noFavoritesTitle
+                        } else {
+                            strings.noTracksTitle
+                        },
+                        emptyMessage = if (currentKind == CollectionKind.PLAYLISTS) {
+                            strings.noFavoritesBody
+                        } else {
+                            strings.noTracksBody
+                        },
+                        onPlay = { track ->
+                            viewModel.playTrack(track, shownTracks)
+                            onOpenPlayer()
+                        },
+                        onToggleFavorite = viewModel::toggleFavorite,
+                    )
+                    currentKind != null -> GroupList(
+                        kind = currentKind,
+                        groups = groups,
+                        onOpenGroup = { onSelectGroup(it.key) },
+                    )
+                }
             }
         }
     }
@@ -134,6 +183,7 @@ fun CollectionScreen(
 
 @Composable
 private fun CollectionHeader(title: String, subtitle: String, onBack: () -> Unit) {
+    val motion = LocalMotionEnabled.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -148,13 +198,19 @@ private fun CollectionHeader(title: String, subtitle: String, onBack: () -> Unit
         )
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(
-                text = title,
-                style = TerminalType.title,
-                color = TextPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Crossfade(
+                targetState = title,
+                animationSpec = tween(if (motion) 200 else 0),
+                label = "collectionTitle",
+            ) { text ->
+                Text(
+                    text = text,
+                    style = TerminalType.title,
+                    color = TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             Spacer(Modifier.height(2.dp))
             Text(
                 text = subtitle,
@@ -172,8 +228,12 @@ private fun GroupList(
     groups: List<TrackGroup>,
     onOpenGroup: (TrackGroup) -> Unit,
 ) {
+    val strings = LocalStrings.current
     if (groups.isEmpty()) {
-        EmptyState("NO ${kind.title} INDEXED", "Scan the library again from the home screen.")
+        EmptyState(
+            title = strings.emptyKind(kind.localizedTitle(strings)),
+            message = strings.scanAgainBody,
+        )
         return
     }
     LazyColumn(
@@ -183,7 +243,7 @@ private fun GroupList(
     ) {
         itemsIndexed(items = groups, key = { _, group -> group.key }) { _, group ->
             GroupCard(
-                glyph = kind.glyph,
+                kind = kind,
                 group = group,
                 onClick = { onOpenGroup(group) },
             )
@@ -192,11 +252,16 @@ private fun GroupList(
 }
 
 @Composable
-private fun GroupCard(glyph: String, group: TrackGroup, onClick: () -> Unit) {
+private fun GroupCard(kind: CollectionKind, group: TrackGroup, onClick: () -> Unit) {
+    val strings = LocalStrings.current
     val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val press = animatedPressScale(pressed, pressedScale = 0.98f)
+
     TerminalCard(
         modifier = Modifier
             .fillMaxWidth()
+            .scaleLayer(press)
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
@@ -218,7 +283,7 @@ private fun GroupCard(glyph: String, group: TrackGroup, onClick: () -> Unit) {
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text = glyph,
+                    text = kind.glyph,
                     style = TerminalType.glyph.copy(color = TextSecondary),
                     maxLines = 1,
                 )
@@ -226,7 +291,7 @@ private fun GroupCard(glyph: String, group: TrackGroup, onClick: () -> Unit) {
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(
-                    text = group.title,
+                    text = groupTitle(kind, group, strings),
                     style = TerminalType.bodyStrong,
                     color = TextPrimary,
                     maxLines = 1,
@@ -234,7 +299,7 @@ private fun GroupCard(glyph: String, group: TrackGroup, onClick: () -> Unit) {
                 )
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    text = group.subtitle,
+                    text = group.subtitle.ifBlank { strings.tracksCount(group.tracks.size) },
                     style = TerminalType.small,
                     color = TextSecondary,
                     maxLines = 1,
@@ -269,6 +334,7 @@ private fun TrackList(
     onPlay: (Track) -> Unit,
     onToggleFavorite: (Track) -> Unit,
 ) {
+    val strings = LocalStrings.current
     if (tracks.isEmpty()) {
         EmptyState(emptyTitle, emptyMessage)
         return
@@ -279,7 +345,7 @@ private fun TrackList(
     ) {
         item(key = "hint") {
             MetaLabel(
-                text = "LONG PRESS A TRACK TO SAVE IT TO PLAYLISTS",
+                text = strings.longPressHint,
                 modifier = Modifier.padding(vertical = 8.dp),
                 color = TextMuted,
             )
@@ -328,30 +394,41 @@ private fun EmptyState(title: String, message: String) {
 
 @Composable
 private fun LibraryPermission(permission: PermissionState) {
+    val strings = LocalStrings.current
     val context = LocalContext.current
     InfoPanel(
         code = "E_LIBRARY_ACCESS",
-        message = "READ_MEDIA_AUDIO is required to index local audio files. " +
-            "TerminalPlayer works fully offline and never uploads media.",
+        message = strings.libraryPermissionMessage,
         actions = {
-            AsciiButton("[ GRANT ]", onClick = permission.request)
-            AsciiButton("[ SETTINGS ]", onClick = { context.openAppSettings() })
+            AsciiButton(strings.grantAction, onClick = permission.request)
+            AsciiButton(strings.settingsAction, onClick = { context.openAppSettings() })
         },
     )
 }
 
-private fun groupsFor(kind: CollectionKind?, catalog: CatalogUiState): List<TrackGroup> =
-    when (kind) {
-        CollectionKind.PLAYLISTS -> listOf(
-            TrackGroup(
-                key = "FAVORITES",
-                title = "FAVORITES",
-                subtitle = "${catalog.favoriteTracks.size} TRACKS",
-                tracks = catalog.favoriteTracks,
-            ),
-        )
-        CollectionKind.ALBUMS -> catalog.albums
-        CollectionKind.ARTISTS -> catalog.artists
-        CollectionKind.FOLDERS -> catalog.folders
-        null -> emptyList()
+private fun groupsFor(
+    kind: CollectionKind?,
+    catalog: CatalogUiState,
+    strings: AppStrings,
+): List<TrackGroup> = when (kind) {
+    CollectionKind.PLAYLISTS -> listOf(
+        TrackGroup(
+            key = "FAVORITES",
+            title = strings.favorites,
+            subtitle = "",
+            tracks = catalog.favoriteTracks,
+        ),
+    )
+    CollectionKind.ALBUMS -> catalog.albums
+    CollectionKind.ARTISTS -> catalog.artists
+    CollectionKind.FOLDERS -> catalog.folders
+    null -> emptyList()
+}
+
+private fun groupTitle(kind: CollectionKind?, group: TrackGroup, strings: AppStrings): String =
+    when {
+        !group.unknownTitle -> group.title
+        kind == CollectionKind.ARTISTS -> strings.unknownArtist
+        kind == CollectionKind.ALBUMS -> strings.unknownAlbum
+        else -> group.title
     }
