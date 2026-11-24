@@ -1,9 +1,17 @@
 package dev.terminalplayer.ui.home
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,6 +46,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.terminalplayer.data.Track
+import dev.terminalplayer.i18n.AppStrings
+import dev.terminalplayer.i18n.LocalStrings
 import dev.terminalplayer.playback.PlaybackUiState
 import dev.terminalplayer.ui.components.BlinkingCursor
 import dev.terminalplayer.ui.components.DashedRingButton
@@ -52,6 +62,12 @@ import dev.terminalplayer.ui.components.TerminalCard
 import dev.terminalplayer.ui.components.TrackRow
 import dev.terminalplayer.ui.components.openAppSettings
 import dev.terminalplayer.ui.library.CollectionKind
+import dev.terminalplayer.ui.library.localizedTitle
+import dev.terminalplayer.ui.motion.Reveal
+import dev.terminalplayer.ui.motion.LocalMotionEnabled
+import dev.terminalplayer.ui.motion.animatedPressScale
+import dev.terminalplayer.ui.motion.revealDelay
+import dev.terminalplayer.ui.motion.scaleLayer
 import dev.terminalplayer.ui.player.CatalogUiState
 import dev.terminalplayer.ui.player.LibrarySort
 import dev.terminalplayer.ui.player.PlayerViewModel
@@ -68,6 +84,9 @@ import dev.terminalplayer.ui.theme.TerminalType
  *
  * Mirrors the reference mock-up: rounded charcoal cards, a single blue accent, ASCII covers and
  * dot-matrix decorations instead of images or vector icons.
+ *
+ * Every block fades in with a small upward drift and a 70 ms stagger ([Reveal]); the sort row and the
+ * tiles animate their own open/press states.
  */
 @Composable
 fun HomeScreen(
@@ -76,6 +95,8 @@ fun HomeScreen(
     onOpenPlayer: () -> Unit,
     onOpenCollection: (CollectionKind?) -> Unit,
 ) {
+    val strings = LocalStrings.current
+    val motion = LocalMotionEnabled.current
     val catalog by viewModel.catalog.collectAsStateWithLifecycle()
     val playback by viewModel.playback.collectAsStateWithLifecycle()
     var sortOpen by rememberSaveable { mutableStateOf(false) }
@@ -87,67 +108,96 @@ fun HomeScreen(
             .padding(horizontal = 16.dp),
     ) {
         Spacer(Modifier.height(10.dp))
-        SearchRow(
-            sortOpen = sortOpen,
-            onToggleSort = { sortOpen = !sortOpen },
-        )
-        if (sortOpen) {
-            Spacer(Modifier.height(10.dp))
-            SortRow(
-                selected = catalog.sort,
-                onSelect = viewModel::selectSort,
+        Reveal(delayMillis = revealDelay(0)) {
+            SearchRow(
+                hint = strings.searchHint,
+                sortOpen = sortOpen,
+                onToggleSort = { sortOpen = !sortOpen },
             )
+        }
+        AnimatedVisibility(
+            visible = sortOpen,
+            enter = fadeIn(tween(if (motion) 160 else 0)) +
+                expandVertically(
+                    tween(if (motion) 220 else 0),
+                    expandFrom = Alignment.Top,
+                ),
+            exit = fadeOut(tween(if (motion) 120 else 0)) +
+                shrinkVertically(
+                    tween(if (motion) 180 else 0),
+                    shrinkTowards = Alignment.Top,
+                ),
+        ) {
+            Column {
+                Spacer(Modifier.height(10.dp))
+                SortRow(
+                    selected = catalog.sort,
+                    onSelect = viewModel::selectSort,
+                )
+            }
         }
 
         Spacer(Modifier.height(22.dp))
-        SectionTitle(
-            title = "MY TRACKS",
-            trailing = {
-                GlyphButton(
-                    glyph = ">",
-                    onClick = { onOpenCollection(null) },
-                    size = 38.dp,
-                    shape = RoundedCornerShape(12.dp),
+        Reveal(delayMillis = revealDelay(1)) {
+            Column {
+                SectionTitle(
+                    title = strings.myTracks,
+                    trailing = {
+                        GlyphButton(
+                            glyph = ">",
+                            onClick = { onOpenCollection(null) },
+                            size = 38.dp,
+                            shape = RoundedCornerShape(12.dp),
+                        )
+                    },
                 )
-            },
-        )
-        Spacer(Modifier.height(10.dp))
-        MyTracksCard(
-            catalog = catalog,
-            playback = playback,
-            permission = permission,
-            onPlay = { track ->
-                viewModel.playTrack(track, catalog.tracks)
-                onOpenPlayer()
-            },
-            onToggleFavorite = viewModel::toggleFavorite,
-            onRescan = viewModel::refreshLibrary,
-        )
+                Spacer(Modifier.height(10.dp))
+                MyTracksCard(
+                    catalog = catalog,
+                    playback = playback,
+                    permission = permission,
+                    onPlay = { track ->
+                        viewModel.playTrack(track, catalog.tracks)
+                        onOpenPlayer()
+                    },
+                    onToggleFavorite = viewModel::toggleFavorite,
+                    onRescan = viewModel::refreshLibrary,
+                )
+            }
+        }
 
         Spacer(Modifier.height(16.dp))
-        LocalMixCard(
-            enabled = catalog.tracks.isNotEmpty(),
-            onClick = {
-                viewModel.playMix()
-                onOpenPlayer()
-            },
-        )
+        Reveal(delayMillis = revealDelay(2)) {
+            LocalMixCard(
+                title = strings.localMixTitle,
+                subtitle = strings.localMixSubtitle,
+                enabled = catalog.tracks.isNotEmpty(),
+                onClick = {
+                    viewModel.playMix()
+                    onOpenPlayer()
+                },
+            )
+        }
 
         Spacer(Modifier.height(24.dp))
-        Text(
-            text = "CATEGORIES",
-            style = TerminalType.title,
-            color = TextPrimary,
-            maxLines = 1,
-        )
-        Spacer(Modifier.height(12.dp))
-        CategoryGrid(onOpen = onOpenCollection)
+        Reveal(delayMillis = revealDelay(3)) {
+            Column {
+                Text(
+                    text = strings.categories,
+                    style = TerminalType.title,
+                    color = TextPrimary,
+                    maxLines = 1,
+                )
+                Spacer(Modifier.height(12.dp))
+                CategoryGrid(onOpen = onOpenCollection)
+            }
+        }
         Spacer(Modifier.height(20.dp))
     }
 }
 
 @Composable
-private fun SearchRow(sortOpen: Boolean, onToggleSort: () -> Unit) {
+private fun SearchRow(hint: String, sortOpen: Boolean, onToggleSort: () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -171,7 +221,7 @@ private fun SearchRow(sortOpen: Boolean, onToggleSort: () -> Unit) {
                 )
                 Spacer(Modifier.width(10.dp))
                 Text(
-                    text = "Search local library",
+                    text = hint,
                     style = TerminalType.body.copy(color = TextMuted),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -190,20 +240,29 @@ private fun SearchRow(sortOpen: Boolean, onToggleSort: () -> Unit) {
 
 @Composable
 private fun SortRow(selected: LibrarySort, onSelect: (LibrarySort) -> Unit) {
+    val strings = LocalStrings.current
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        MetaLabel(text = "SORT", color = TextMuted)
+        MetaLabel(text = strings.sortLabel, color = TextMuted)
         LibrarySort.entries.forEach { sort ->
             GlyphPill(
-                text = sort.label,
+                text = sortLabel(sort, strings),
                 onClick = { onSelect(sort) },
                 selected = sort == selected,
             )
         }
     }
+}
+
+private fun sortLabel(sort: LibrarySort, strings: AppStrings): String = when (sort) {
+    LibrarySort.TITLE -> strings.sortTitle
+    LibrarySort.ARTIST -> strings.sortArtist
+    LibrarySort.LENGTH -> strings.sortLength
 }
 
 @Composable
@@ -215,26 +274,27 @@ private fun MyTracksCard(
     onToggleFavorite: (Track) -> Unit,
     onRescan: () -> Unit,
 ) {
+    val strings = LocalStrings.current
     TerminalCard(Modifier.fillMaxWidth()) {
         Column(Modifier.fillMaxWidth()) {
             when {
                 !permission.granted -> PermissionPrompt(permission)
                 !catalog.error.isNullOrBlank() -> LibraryMessage(
-                    title = "LIBRARY ERROR",
+                    title = strings.libraryErrorTitle,
                     message = catalog.error.orEmpty(),
                     tone = Danger,
-                    action = "[ RESCAN ]",
+                    action = strings.rescanAction,
                     onAction = onRescan,
                 )
                 catalog.tracks.isEmpty() && (catalog.loading || !catalog.loaded) -> LibraryMessage(
-                    title = "SCANNING MEDIASTORE...",
-                    message = "This can take a few seconds on large libraries.",
+                    title = strings.scanningTitle,
+                    message = strings.scanningBody,
                     showCursor = true,
                 )
                 catalog.tracks.isEmpty() -> LibraryMessage(
-                    title = "NO AUDIO FILES FOUND",
-                    message = "Add music to the device, then scan the library again.",
-                    action = "[ RESCAN ]",
+                    title = strings.emptyLibraryTitle,
+                    message = strings.emptyLibraryBody,
+                    action = strings.rescanAction,
                     onAction = onRescan,
                 )
                 else -> {
@@ -259,30 +319,30 @@ private fun MyTracksCard(
 
 @Composable
 private fun PermissionPrompt(permission: PermissionState) {
+    val strings = LocalStrings.current
     val context = LocalContext.current
     Column(Modifier.fillMaxWidth().padding(16.dp)) {
         Text(
-            text = "LIBRARY ACCESS REQUIRED",
+            text = strings.libraryAccessTitle,
             style = TerminalType.bodyStrong,
             color = TextPrimary,
             maxLines = 1,
         )
         Spacer(Modifier.height(6.dp))
         Text(
-            text = "TerminalPlayer indexes local audio through MediaStore. " +
-                "Files never leave the device.",
+            text = strings.libraryAccessBody,
             style = TerminalType.small,
             color = TextSecondary,
         )
         Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             GlyphPill(
-                text = "[ GRANT ]",
+                text = strings.grantAction,
                 onClick = permission.request,
                 selected = true,
             )
             GlyphPill(
-                text = "[ SETTINGS ]",
+                text = strings.settingsAction,
                 onClick = { context.openAppSettings() },
             )
         }
@@ -326,12 +386,20 @@ private fun LibraryMessage(
 }
 
 @Composable
-private fun LocalMixCard(enabled: Boolean, onClick: () -> Unit) {
+private fun LocalMixCard(
+    title: String,
+    subtitle: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
     val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val press = animatedPressScale(pressed && enabled, pressedScale = 0.98f)
     val shape = RoundedCornerShape(18.dp)
     Box(
         modifier = Modifier
             .fillMaxWidth()
+            .scaleLayer(press)
             .alpha(if (enabled) 1f else 0.5f)
             .clip(shape)
             .background(Brush.horizontalGradient(listOf(MixStart, MixEnd)))
@@ -348,13 +416,13 @@ private fun LocalMixCard(enabled: Boolean, onClick: () -> Unit) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(
-                    text = "LOCAL MIX",
+                    text = title,
                     style = TerminalType.huge.copy(fontSize = 21.sp, color = TextPrimary),
                     maxLines = 1,
                 )
                 Spacer(Modifier.height(5.dp))
                 Text(
-                    text = "Offline selection from your files",
+                    text = subtitle,
                     style = TerminalType.small.copy(color = TextPrimary.copy(alpha = 0.68f)),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -406,10 +474,15 @@ private fun CategoryTile(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val strings = LocalStrings.current
     val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val press = animatedPressScale(pressed, pressedScale = 0.96f)
+
     TerminalCard(
         modifier = modifier
             .height(112.dp)
+            .scaleLayer(press)
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
@@ -438,7 +511,7 @@ private fun CategoryTile(
             )
             Spacer(Modifier.weight(1f))
             Text(
-                text = kind.title,
+                text = kind.localizedTitle(strings),
                 style = TerminalType.bodyStrong.copy(fontSize = 14.sp),
                 color = TextPrimary,
                 maxLines = 1,

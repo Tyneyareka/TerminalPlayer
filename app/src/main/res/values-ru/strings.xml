@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The Compose shell is localized at runtime from `i18n/AppStrings.kt` (SETTINGS -> ЯЗЫК).
+    These resources only cover strings consumed by the Android framework itself.
+-->
+<resources>
+    <string name="app_name" translatable="false">TerminalPlayer</string>
+    <string name="notification_channel_name">Воспроизведение</string>
+</resources>

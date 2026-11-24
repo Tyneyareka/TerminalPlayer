@@ -3,6 +3,7 @@ package dev.terminalplayer
 import android.app.Application
 import dev.terminalplayer.data.FavoritesRepository
 import dev.terminalplayer.data.MusicRepository
+import dev.terminalplayer.data.SettingsRepository
 import dev.terminalplayer.playback.PlayerConnection
 
 /**
@@ -20,6 +21,9 @@ class TerminalPlayerApp : Application() {
     lateinit var favoritesRepository: FavoritesRepository
         private set
 
+    lateinit var settingsRepository: SettingsRepository
+        private set
+
     lateinit var playerConnection: PlayerConnection
         private set
 
@@ -27,6 +31,7 @@ class TerminalPlayerApp : Application() {
         super.onCreate()
         musicRepository = MusicRepository(this)
         favoritesRepository = FavoritesRepository(this)
+        settingsRepository = SettingsRepository(this)
         playerConnection = PlayerConnection(this)
         // Connect immediately: this also boots the MediaSessionService and publishes the
         // audio session id the visualizer needs.
