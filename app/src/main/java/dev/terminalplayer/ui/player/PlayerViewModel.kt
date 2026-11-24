@@ -15,11 +15,16 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-/** How the library is ordered. Cycled from the `[=]` button on the library screen. */
-enum class LibrarySort(val label: String) {
-    TITLE("TITLE"),
-    ARTIST("ARTIST"),
-    LENGTH("LENGTH");
+/**
+ * How the library is ordered. Cycled from the `[=]` button on the library screen.
+ *
+ * The enum holds no display names: the sort row reads them from `AppStrings`, so the pills follow
+ * the language selected in SETTINGS.
+ */
+enum class LibrarySort {
+    TITLE,
+    ARTIST,
+    LENGTH;
 
     fun next(): LibrarySort = entries[(ordinal + 1) % entries.size]
 
@@ -32,12 +37,18 @@ enum class LibrarySort(val label: String) {
     }
 }
 
-/** A named bucket of tracks: one album, one artist, one folder or the favourites playlist. */
+/**
+ * A named bucket of tracks: one album, one artist, one folder or the favourites playlist.
+ *
+ * [subtitle] may be blank (unknown artist, plain count): the collection screen then renders a
+ * localized track count instead of a hardcoded English caption.
+ */
 data class TrackGroup(
     val key: String,
     val title: String,
     val subtitle: String,
     val tracks: List<Track>,
+    val unknownTitle: Boolean = false,
 ) {
     val durationMs: Long get() = tracks.sumOf { it.durationMs }
 }
@@ -169,29 +180,32 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     // -------------------------------------------------------------- grouping
 
     private fun groupAlbums(tracks: List<Track>): List<TrackGroup> =
-        tracks.groupBy { it.album.ifBlank { "UNKNOWN ALBUM" } }
+        tracks.groupBy { it.album }
             .map { (album, items) ->
-                val artists = items.map { it.artistLabel }
+                val artists = items.map { it.artist }
+                    .filter { it.isNotBlank() }
                     .distinct()
                     .take(2)
                     .joinToString(" / ")
                 TrackGroup(
-                    key = album,
-                    title = album,
-                    subtitle = artists.ifBlank { "${items.size} TRACKS" },
+                    key = album.ifBlank { UNKNOWN_ALBUM },
+                    title = album.ifBlank { UNKNOWN_ALBUM },
+                    subtitle = artists,
                     tracks = items,
+                    unknownTitle = album.isBlank(),
                 )
             }
             .sortedWith(byTitle())
 
     private fun groupArtists(tracks: List<Track>): List<TrackGroup> =
-        tracks.groupBy { it.artistLabel }
+        tracks.groupBy { it.artist }
             .map { (artist, items) ->
                 TrackGroup(
-                    key = artist,
-                    title = artist,
-                    subtitle = "${items.size} TRACKS",
+                    key = artist.ifBlank { UNKNOWN_ARTIST },
+                    title = artist.ifBlank { UNKNOWN_ARTIST },
+                    subtitle = "",
                     tracks = items,
+                    unknownTitle = artist.isBlank(),
                 )
             }
             .sortedWith(byTitle())
@@ -202,7 +216,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 TrackGroup(
                     key = folder,
                     title = folder,
-                    subtitle = "${items.size} TRACKS",
+                    subtitle = "",
                     tracks = items,
                 )
             }
@@ -211,3 +225,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private fun byTitle(): Comparator<TrackGroup> =
         compareBy(String.CASE_INSENSITIVE_ORDER) { group: TrackGroup -> group.title }
 }
+
+private const val UNKNOWN_ALBUM = "UNKNOWN ALBUM"
+private const val UNKNOWN_ARTIST = "UNKNOWN ARTIST"
